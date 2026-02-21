@@ -83,6 +83,7 @@ class BigramLanguageModel(nn.Module):
         # idx and targets are both (B,T) tensor of integers
         token_emb = self.token_embedding_table(idx) # (B,T,C), ahora este C es la dimension del embd space
         pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
+        # Ahora, x tiene información acerca de la identidad de los tokens y también de su posición en la secuencia.
         x = token_emb + pos_emb # (B, T, C)
         logits = self.lm_head(x) # (B, T, vocab_size)
 
