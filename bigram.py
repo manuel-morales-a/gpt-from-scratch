@@ -101,9 +101,43 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(n_embd, n_embd)
 
     def forward(self, x):
-        return torch.cat([h(x) for h in self.heads], dim=-1)
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        # La proyección es simplmente una operación lineal desde el espacio de multi-heads al espacio del embedding.
+        out = self.proj(out)
+        return out
+    
+# Ahora implementamos, siguiendo el paper original, la feed forward networks, que es un simple MLP aplicado a cada posición.
+class FeedForward(nn.Module):
+
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd), 
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd), 
+        )
+
+    def forward(self, x):
+        return self.net(x)
+    
+# Ahora, replicamos el bloque elemental del transformer
+class Block(nn.Module):
+    """ Un bloque de transformer: comunicación (attention head) seguida de computación (FFN)"""
+    
+    def __init__(self, n_embd, num_heads):
+        # n_embed es la dimensión del embedding space, y num_heads es el número de heads en multi-head attention.
+        super().__init__()
+        head_size = n_embd // num_heads
+        self.sa = MultiHeadAttention(num_heads, head_size)
+        self.ffwd = FeedForward(n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(x) # residual connection
+        x = x + self.ffwd(x) # residual connection
+        return x
 
 # super simple bigram model
 class BigramLanguageModel(nn.Module):
@@ -115,7 +149,18 @@ class BigramLanguageModel(nn.Module):
         # Le agregamos informacion al modelo no sólo acerca de la identidad de los tokens en la secuencia,
         # sino también de su posición.
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.sa_heads = MultiHeadAttention(4, n_embd // 4) # Tienes que normalizar la head size para que el output de multihead attention tenga la misma dimensión que el embedding size.
+
+        ## legacy: un solo bloque
+        #self.sa_heads = MultiHeadAttention(4, n_embd // 4) # Tienes que normalizar la head size para que el output de multihead attention tenga la misma dimensión que el embedding size.
+        #self.ffwd = FeedForward(n_embd)
+        ## legacy
+
+        self.blocks = nn.Sequential(
+            Block(n_embd, num_heads=4),
+            Block(n_embd, num_heads=4),
+            Block(n_embd, num_heads=4)
+        )
+
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -126,7 +171,10 @@ class BigramLanguageModel(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
         # Ahora, x tiene información acerca de la identidad de los tokens y también de su posición en la secuencia.
         x = token_emb + pos_emb # (B, T, C)
-        x = self.sa_heads(x) # (B, T, C)
+        # legacy from a single block
+        #x = self.sa_heads(x) # (B, T, C)
+        #x = self.ffwd(x) # (B, T, C)
+        x = self.blocks(x) # (B, T, C)
         logits = self.lm_head(x) # (B, T, vocab_size)
 
         if targets is None:
