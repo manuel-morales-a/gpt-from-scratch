@@ -5,9 +5,9 @@ from torch.nn import functional as F
 # hyperparameters
 batch_size = 32 # cuantas secuencias en paralelo puede procesar el model
 block_size = 8 # cual es la longitud maxima de contexto para las predicciones?
-max_iters = 10000
-eval_interval = 300
-learning_rate = 1e-2
+max_iters = 5000
+eval_interval = 500
+learning_rate = 1e-3
 device = 'cuda' if torch.cuda.is_available() else 'cpu' # permite correr en GPU si es posible
 eval_iters = 200
 n_embd = 32
@@ -65,6 +65,35 @@ def estimate_loss():
     model.train() # Le decimos al modelo que vuelta a training
     return out
 
+# Implementamos una head de self-attention.
+class Head(nn.Module):
+    """ Una head de self-attention """
+    
+    def __init__(self, head_size):
+        super().__init__()
+        # Usualmente estas layers no llevan bias. 
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        # Técnicamente, debemos registrar la máscara como buffer y no como variable en PyTorchy conventions.
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x)   # (B,T,head_size)
+        q = self.query(x) # (B,T,head_size)
+        v = self.value(x) # (B,T,head_size)
+
+        # Calculamos los attention scores ("affinities")
+        wei = q @ k.transpose(-2,-1) * C**-0.5 # (B,T,head_size) @ (B, head_size, T) -> (B,T,T)
+        # Aplicamos la máscara para que el modelo no pueda "mirar hacia adelante" en la secuencia, haciéndose un decoder block.
+        wei = wei.masked_fill(self.tril[:T,:T] == 0, float('-inf')) # (B,T,T)
+        wei = F.softmax(wei, dim=-1) # (B,T,T)
+
+        # calculamos la weighted aggregation de los valores
+        out = wei @ v # (B,T,T) @ (B,T,head_size) -> (B,T,head_size)
+        return out
+
 # super simple bigram model
 class BigramLanguageModel(nn.Module):
 
@@ -75,6 +104,7 @@ class BigramLanguageModel(nn.Module):
         # Le agregamos informacion al modelo no sólo acerca de la identidad de los tokens en la secuencia,
         # sino también de su posición.
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.sa_head = Head(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -85,6 +115,7 @@ class BigramLanguageModel(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
         # Ahora, x tiene información acerca de la identidad de los tokens y también de su posición en la secuencia.
         x = token_emb + pos_emb # (B, T, C)
+        x = self.sa_head(x) # (B, T, C)
         logits = self.lm_head(x) # (B, T, vocab_size)
 
         if targets is None:
@@ -100,8 +131,10 @@ class BigramLanguageModel(nn.Module):
     def generate(self, idx, max_new_tokens):
         # idx es (B, T) array de indices en el contexto actual
         for _ in range(max_new_tokens):
+            # Tenemos que cortar los indices a block_size porque el modelo no puede mirar más allá de block_size tokens en el pasado.
+            idx_cond = idx[:, -block_size:] # (B, block_size)
             # las predicciones
-            logits, loss = self(idx)
+            logits, loss = self(idx_cond)
             # nos concentramos solo en el ultimo time, predecir el next token
             logits = logits[:, -1, :] # se convierte en (B, C)
             # aplicamos softmax para obtener probabilidades
