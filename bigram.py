@@ -164,7 +164,8 @@ class BigramLanguageModel(nn.Module):
         self.blocks = nn.Sequential(
             Block(n_embd, num_heads=4),
             Block(n_embd, num_heads=4),
-            Block(n_embd, num_heads=4)
+            Block(n_embd, num_heads=4),
+            nn.LayerNorm(n_embd)
         )
 
         self.lm_head = nn.Linear(n_embd, vocab_size)
