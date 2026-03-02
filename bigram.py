@@ -133,10 +133,16 @@ class Block(nn.Module):
         head_size = n_embd // num_heads
         self.sa = MultiHeadAttention(num_heads, head_size)
         self.ffwd = FeedForward(n_embd)
+        # Ahora incluimos algunas normalization layer para regular la varianza de los inputs en cada bloque.
+        # De esta forma, los input distribuyen como unit Gaussians.
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
-        x = x + self.sa(x) # residual connection
-        x = x + self.ffwd(x) # residual connection
+        # Aplicamos las layer norm antes de la SA and FFN. Esto se llama "pre-norm" y es uno
+        # de los cambios más significativos que los transformers han hecho respecto a la implementación original.
+        x = x + self.sa(self.ln1(x)) # residual connection
+        x = x + self.ffwd(self.ln2(x)) # residual connection
         return x
 
 # super simple bigram model
